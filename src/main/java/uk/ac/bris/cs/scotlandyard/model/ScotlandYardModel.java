@@ -20,6 +20,7 @@ import java.util.Set;
 import java.util.function.Consumer;
 
 import javafx.collections.FXCollections;
+import org.checkerframework.checker.units.qual.Current;
 import uk.ac.bris.cs.gamekit.graph.Edge;
 import uk.ac.bris.cs.gamekit.graph.Graph;
 import uk.ac.bris.cs.gamekit.graph.ImmutableGraph;
@@ -27,7 +28,7 @@ import uk.ac.bris.cs.gamekit.graph.ImmutableGraph;
 import uk.ac.bris.cs.gamekit.graph.Graph;
 
 // TODO implement all methods and pass all tests
-public class ScotlandYardModel implements ScotlandYardGame {
+public class ScotlandYardModel implements ScotlandYardGame, Consumer<Move>, MoveVisitor{
 	private List<Boolean> rounds;
 	private Graph<Integer, Transport> graph;
 	private List<ScotlandYardPlayer> playerslist = new ArrayList<>();
@@ -106,7 +107,6 @@ public class ScotlandYardModel implements ScotlandYardGame {
 	@Override
 	public void registerSpectator(Spectator spectator) {
 		// TODO
-
 		throw new RuntimeException("Implement me");
 	}
 
@@ -116,10 +116,84 @@ public class ScotlandYardModel implements ScotlandYardGame {
 		throw new RuntimeException("Implement me");
 	}
 
+	//Generates all possible valid moves of the current player based on player's location
+	private Set<Move> validMove(Colour player) {
+		//Get the current player
+		ScotlandYardPlayer currentPlayer = playerslist.get(CurrentPlayerIndex);
+		//Get location of current player
+		Integer location = currentPlayer.location();
+
+		//Get all possible edges based on player's location and store it in a collection
+		Collection<Edge<Integer, Transport>> edges = graph.getEdgesFrom(graph.getNode(location));
+		//Store all available location(nodes)
+		List <Integer> nodes = new ArrayList<>();
+
+		//Initialize a set of moves to store all possible moves
+		Set<Move> moves = new HashSet<>();
+
+		//Iterate through players and node
+		for (Edge<Integer, Transport> edge : edges){
+			for (ScotlandYardPlayer Player : playerslist){
+				int destination = edge.destination().value();
+				//check if any node is occupied by other player and if player has ticket
+				if ( destination != Player.location() && currentPlayer.hasTickets(Ticket.fromTransport(edge.data())))
+					//add the node to the list
+					nodes.add(destination);
+					moves.add(new TicketMove(currentPlayer.colour(), Ticket.fromTransport(edge.data()), destination));
+			}
+		}
+
+		//store all possible second available edges for double move
+		List<Edge<Integer, Transport>> secondEdges = new ArrayList<>();
+		if(currentPlayer.isDetective() && currentPlayer.hasTickets(DOUBLE))
+			for(Integer node : nodes) {
+				//add all second available edges
+				secondEdges.addAll(graph.getEdgesFrom(graph.getNode(node)));
+			}
+
+			for (Edge<Integer, Transport> edge : secondEdges){
+				for(ScotlandYardPlayer Player : playerslist){
+					int destination = edge.destination().value();
+					if( destination != Player.location() && Player.hasTickets(Ticket.fromTransport(edge.data())))
+						nodes.add(destination);
+						moves.add(new TicketMove(currentPlayer.colour(), Ticket.fromTransport(edge.data()), destination ));
+				}
+			}
+
+			if(!currentPlayer.hasTickets(Ticket.BUS) && !currentPlayer.hasTickets(Ticket.TAXI) && !currentPlayer.hasTickets(Ticket.UNDERGROUND))
+				moves.add(new PassMove(currentPlayer.colour()));
+
+			if(moves.isEmpty())
+				moves.add(new PassMove(currentPlayer.colour()));
+
+		return moves;
+	}
+
 	@Override
 	public void startRotate() {
-		// TODO
-		throw new RuntimeException("Implement me");
+		//throw new RuntimeException("Implement me");
+		if (isGameOver()) {
+			throw new IllegalStateException("Game is over");
+		}
+
+		ScotlandYardPlayer currentPlayer = playerslist.get(CurrentPlayerIndex);
+		Set <Move> moves = validMove(currentPlayer.colour());
+		currentPlayer.player().makeMove(this, currentPlayer.location(), moves, this);
+	}
+
+	@Override
+	public void accept(Move move) {
+		requireNonNull(move);
+		if (!validMove(move.colour()).contains(move)) {
+			throw new IllegalArgumentException("Invalid Move");
+		}
+		move.visit(this);
+
+		ScotlandYardPlayer currentPlayer = playerslist.get(CurrentPlayerIndex);
+
+		if (!currentPlayer.isMrX() && !isGameOver()) {
+			currentPlayer.player().makeMove(this, currentPlayer.location(), validMove(currentPlayer.colour()), this);
+		}
 	}
 
 	@Override
@@ -128,9 +202,9 @@ public class ScotlandYardModel implements ScotlandYardGame {
 		throw new RuntimeException("Implement me");
 	}
 
+	//returns list of players(Colour)
 	@Override
 	public List<Colour> getPlayers() {
-		// TODO
 		ArrayList<Colour> colours = new ArrayList<>();
 		for (ScotlandYardPlayer Player : playerslist) {
 			colours.add(Player.colour());
@@ -140,19 +214,25 @@ public class ScotlandYardModel implements ScotlandYardGame {
 
 	@Override
 	public Set<Colour> getWinningPlayers() {
-		// TODO
 		return Collections.emptySet();
 	}
 
 	@Override
 	public Optional<Integer> getPlayerLocation(Colour colour) {
-		// TODO
-		throw new RuntimeException("Implement me");
+		//If it is MrX, return MrX last known location
+		if (colour == BLACK)
+			return Optional.of(MrXLastLocation);
+		else
+			//return location of requested player
+			for (ScotlandYardPlayer player : playerslist){
+				if(player.colour() == colour)
+					return Optional.of(player.location());
+		}
+		return Optional.empty();
 	}
 
 	@Override
 	public Optional<Integer> getPlayerTickets(Colour colour, Ticket ticket) {
-		// TODO
 		for (ScotlandYardPlayer player : playerslist) {
 			if (player.colour() == colour)
 				return Optional.of(player.tickets().get(ticket));
@@ -162,32 +242,26 @@ public class ScotlandYardModel implements ScotlandYardGame {
 
 	@Override
 	public boolean isGameOver() {
-		// TODO
 		return false;
 	}
 
 	@Override
 	public Colour getCurrentPlayer() {
-		// TODO
 		return playerslist.get(CurrentPlayerIndex).colour();
 	}
 
 	@Override
 	public int getCurrentRound() {
-		// TODO
 		return CurrentRound;
 	}
 
 	@Override
 	public List<Boolean> getRounds() {
-		// TODO
 		return Collections.unmodifiableList(rounds);
-
 	}
 
 	@Override
 	public Graph<Integer, Transport> getGraph() {
-		// TODO
 		return new ImmutableGraph<>(graph);
 	}
 
