@@ -116,62 +116,81 @@ public class ScotlandYardModel implements ScotlandYardGame, Consumer<Move>, Move
 		throw new RuntimeException("Implement me");
 	}
 
+
 	//Generates all possible valid moves of the current player based on player's location
 	private Set<Move> validMove(Colour player) {
-		//Get the current player
 		ScotlandYardPlayer currentPlayer = playerslist.get(CurrentPlayerIndex);
-		//Get location of current player
 		Integer location = currentPlayer.location();
 
-		//Get all possible edges based on player's location and store it in a collection
 		Collection<Edge<Integer, Transport>> edges = graph.getEdgesFrom(graph.getNode(location));
-		//Store all available location(nodes)
-		List <Integer> nodes = new ArrayList<>();
+		Set<Move>firstMoves = new HashSet<>();
+		Set<Move>doubleMoves = new HashSet<>();
+		Set<Move>allMoves = new HashSet<>();
 
-		//Initialize a set of moves to store all possible moves
-		Set<Move> moves = new HashSet<>();
-
-		//Iterate through players and node
-		for (Edge<Integer, Transport> edge : edges){
-			for (ScotlandYardPlayer Player : playerslist){
+		for(Edge<Integer, Transport> edge : edges) {
+			for (ScotlandYardPlayer Player : playerslist) {
 				int destination = edge.destination().value();
-				//check if any node is occupied by other player and if player has ticket
-				if ( destination != Player.location() && currentPlayer.hasTickets(Ticket.fromTransport(edge.data())))
-					//add the node to the list
-					nodes.add(destination);
-					moves.add(new TicketMove(currentPlayer.colour(), Ticket.fromTransport(edge.data()), destination));
+				if (destination != Player.location() && Player.isDetective()) {
+					if (currentPlayer.hasTickets(Ticket.fromTransport(edge.data())))
+						firstMoves.add(new TicketMove(player, Ticket.fromTransport(edge.data()), destination));
+					if (currentPlayer.hasTickets(SECRET))
+						firstMoves.add(new TicketMove(player, SECRET, destination));
+				}
 			}
 		}
 
-		//store all possible second available edges for double move
-		List<Edge<Integer, Transport>> secondEdges = new ArrayList<>();
-		if(currentPlayer.isDetective() && currentPlayer.hasTickets(DOUBLE))
-			for(Integer node : nodes) {
-				//add all second available edges
-				secondEdges.addAll(graph.getEdgesFrom(graph.getNode(node)));
-			}
+		if(currentPlayer.hasTickets(DOUBLE) && CurrentRound != getRounds().size()-1 && CurrentRound != getRounds().size())
+			for(Move move : firstMoves){
+				TicketMove move1 = (TicketMove) move;
 
-			for (Edge<Integer, Transport> edge : secondEdges){
-				for(ScotlandYardPlayer Player : playerslist){
-					int destination = edge.destination().value();
-					if( destination != Player.location() && Player.hasTickets(Ticket.fromTransport(edge.data())))
-						nodes.add(destination);
-						moves.add(new TicketMove(currentPlayer.colour(), Ticket.fromTransport(edge.data()), destination ));
+				Collection<Edge<Integer, Transport>> secondEdges = graph.getEdgesFrom(graph.getNode(move1.destination()));
+				Set<Move> secondMoves = new HashSet<>();
+
+				for(Edge<Integer, Transport> edge : secondEdges) {
+					for (ScotlandYardPlayer Player : playerslist) {
+						int destination = edge.destination().value();
+						if (destination != Player.location() && Player.isDetective()){
+							if (currentPlayer.hasTickets(Ticket.fromTransport(edge.data())))
+								secondMoves.add(new TicketMove(player, Ticket.fromTransport(edge.data()), destination));
+							if (currentPlayer.hasTickets(SECRET))
+								secondMoves.add(new TicketMove(player, SECRET, destination));
+						}
+					}
+				}
+
+				for (Move move2 : secondMoves){
+					TicketMove move_2 = (TicketMove) move2;
+					doubleMoves.add(new DoubleMove(player, move1, move_2));
 				}
 			}
+//		//store all possible second available edges for double move
+//		List<Edge<Integer, Transport>> secondEdges = new ArrayList<>();
+//		if(currentPlayer.isDetective() && currentPlayer.hasTickets(DOUBLE))
+//			for(Integer node : nodes) {
+//				//add all second available edges
+//				secondEdges.addAll(graph.getEdgesFrom(graph.getNode(node)));
+//			}
+//
+//		for (Edge<Integer, Transport> edge : secondEdges){
+//			for(ScotlandYardPlayer Player : playerslist){
+//				int destination = edge.destination().value();
+//				if( destination != Player.location() && Player.hasTickets(Ticket.fromTransport(edge.data())))
+//					nodes.add(destination);
+//					doubleMoves.add(new TicketMove(player, Ticket.fromTransport(edge.data()), destination ));
+//			}
+//		}
+//
+		allMoves.addAll(firstMoves);
+		allMoves.addAll(doubleMoves);
 
-			if(!currentPlayer.hasTickets(Ticket.BUS) && !currentPlayer.hasTickets(Ticket.TAXI) && !currentPlayer.hasTickets(Ticket.UNDERGROUND))
-				moves.add(new PassMove(currentPlayer.colour()));
+		if (firstMoves.isEmpty() && currentPlayer.isDetective())
+			allMoves.add(new PassMove(currentPlayer.colour()));
 
-			if(moves.isEmpty())
-				moves.add(new PassMove(currentPlayer.colour()));
-
-		return moves;
+		return allMoves;
 	}
 
 	@Override
-	public void startRotate() {
-		//throw new RuntimeException("Implement me");
+	public void startRotate(){
 		if (isGameOver()) {
 			throw new IllegalStateException("Game is over");
 		}
