@@ -32,9 +32,9 @@ public class ScotlandYardModel implements ScotlandYardGame, Consumer<Move>, Move
 	private List<Boolean> rounds;
 	private Graph<Integer, Transport> graph;
 	private List<ScotlandYardPlayer> playerslist = new ArrayList<>();
-	private int CurrentPlayerIndex = 0;
-	private int CurrentRound = 0;
-	private int MrXLastLocation = 0;
+	private int CurrentPlayerIndex;
+	private int CurrentRound;
+	private int MrXLastLocation;
 
 	public ScotlandYardModel(List<Boolean> rounds,
 				Graph<Integer, Transport> graph,
@@ -102,6 +102,10 @@ public class ScotlandYardModel implements ScotlandYardGame, Consumer<Move>, Move
 			this.playerslist.add(new ScotlandYardPlayer(configuration.player,configuration.colour,
 				configuration.location, configuration.tickets ));
 		}
+
+		CurrentPlayerIndex = 0;
+		CurrentRound = 0;
+		MrXLastLocation = 0;
 	}
 
 	@Override
@@ -115,7 +119,6 @@ public class ScotlandYardModel implements ScotlandYardGame, Consumer<Move>, Move
 		// TODO
 		throw new RuntimeException("Implement me");
 	}
-
 
 	//Generates all possible valid moves of the current player based on player's location
 	private Set<Move> validMove(Colour player) {
@@ -139,52 +142,42 @@ public class ScotlandYardModel implements ScotlandYardGame, Consumer<Move>, Move
 			}
 		}
 
-		if(currentPlayer.hasTickets(DOUBLE) && CurrentRound != getRounds().size()-1 && CurrentRound != getRounds().size())
-			for(Move move : firstMoves){
-				TicketMove move1 = (TicketMove) move;
+		allMoves.addAll(firstMoves);
 
-				Collection<Edge<Integer, Transport>> secondEdges = graph.getEdgesFrom(graph.getNode(move1.destination()));
-				Set<Move> secondMoves = new HashSet<>();
+		if(currentPlayer.hasTickets(DOUBLE))
+			if(CurrentRound != getRounds().size()-1 && CurrentRound != getRounds().size())
+				for(Move move : firstMoves){
+					TicketMove move1 = (TicketMove) move;
 
-				for(Edge<Integer, Transport> edge : secondEdges) {
-					for (ScotlandYardPlayer Player : playerslist) {
-						int destination = edge.destination().value();
-						if (destination != Player.location() && Player.isDetective()){
-							if (currentPlayer.hasTickets(Ticket.fromTransport(edge.data())))
-								secondMoves.add(new TicketMove(player, Ticket.fromTransport(edge.data()), destination));
-							if (currentPlayer.hasTickets(SECRET))
-								secondMoves.add(new TicketMove(player, SECRET, destination));
+					currentPlayer.removeTicket(move1.ticket());
+
+					Collection<Edge<Integer, Transport>> secondEdges = graph.getEdgesFrom(graph.getNode(move1.destination()));
+					Set<Move> secondMoves = new HashSet<>();
+
+					for(Edge<Integer, Transport> edge : secondEdges) {
+						for (ScotlandYardPlayer Player : playerslist) {
+							int destination = edge.destination().value();
+							if (destination != Player.location() && Player.isDetective()){
+								if (currentPlayer.hasTickets(Ticket.fromTransport(edge.data())))
+									secondMoves.add(new TicketMove(player, Ticket.fromTransport(edge.data()), destination));
+								if (currentPlayer.hasTickets(SECRET))
+									secondMoves.add(new TicketMove(player, SECRET, destination));
+							}
 						}
+					}
+
+					currentPlayer.addTicket(move1.ticket());
+
+					for (Move move2 : secondMoves){
+						TicketMove move_2 = (TicketMove) move2;
+						doubleMoves.add(new DoubleMove(player, move1, move_2));
 					}
 				}
 
-				for (Move move2 : secondMoves){
-					TicketMove move_2 = (TicketMove) move2;
-					doubleMoves.add(new DoubleMove(player, move1, move_2));
-				}
-			}
-//		//store all possible second available edges for double move
-//		List<Edge<Integer, Transport>> secondEdges = new ArrayList<>();
-//		if(currentPlayer.isDetective() && currentPlayer.hasTickets(DOUBLE))
-//			for(Integer node : nodes) {
-//				//add all second available edges
-//				secondEdges.addAll(graph.getEdgesFrom(graph.getNode(node)));
-//			}
-//
-//		for (Edge<Integer, Transport> edge : secondEdges){
-//			for(ScotlandYardPlayer Player : playerslist){
-//				int destination = edge.destination().value();
-//				if( destination != Player.location() && Player.hasTickets(Ticket.fromTransport(edge.data())))
-//					nodes.add(destination);
-//					doubleMoves.add(new TicketMove(player, Ticket.fromTransport(edge.data()), destination ));
-//			}
-//		}
-//
-		allMoves.addAll(firstMoves);
 		allMoves.addAll(doubleMoves);
 
 		if (firstMoves.isEmpty() && currentPlayer.isDetective())
-			allMoves.add(new PassMove(currentPlayer.colour()));
+			allMoves.add(new PassMove(player));
 
 		return allMoves;
 	}
@@ -203,12 +196,16 @@ public class ScotlandYardModel implements ScotlandYardGame, Consumer<Move>, Move
 	@Override
 	public void accept(Move move) {
 		requireNonNull(move);
+		//check if move is valid
 		if (!validMove(move.colour()).contains(move)) {
 			throw new IllegalArgumentException("Invalid Move");
 		}
+		//visit the move
 		move.visit(this);
 
-		ScotlandYardPlayer currentPlayer = playerslist.get(CurrentPlayerIndex);
+		// update the currentPlayerIndex so next player will be called to make move
+		CurrentPlayerIndex = (CurrentPlayerIndex + 1)%(playerslist.size());
+		ScotlandYardPlayer currentPlayer = playerslist.get(CurrentPlayerIndex );
 
 		if (!currentPlayer.isMrX() && !isGameOver()) {
 			currentPlayer.player().makeMove(this, currentPlayer.location(), validMove(currentPlayer.colour()), this);
