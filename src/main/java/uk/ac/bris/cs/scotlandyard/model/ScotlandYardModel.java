@@ -31,7 +31,7 @@ import uk.ac.bris.cs.gamekit.graph.Graph;
 public class ScotlandYardModel implements ScotlandYardGame, Consumer<Move>, MoveVisitor{
 	private List<Boolean> rounds;
 	private Graph<Integer, Transport> graph;
-	private List<ScotlandYardPlayer> playerslist = new ArrayList<>();
+	private List<ScotlandYardPlayer> playerList = new ArrayList<>();
 	private int CurrentPlayerIndex;
 	private int CurrentRound;
 	private int MrXLastLocation;
@@ -99,12 +99,12 @@ public class ScotlandYardModel implements ScotlandYardGame, Consumer<Move>, Move
 		}
 
 		for(PlayerConfiguration configuration : configurations){
-			this.playerslist.add(new ScotlandYardPlayer(configuration.player,configuration.colour,
+			this.playerList.add(new ScotlandYardPlayer(configuration.player,configuration.colour,
 				configuration.location, configuration.tickets ));
 		}
 
 		CurrentPlayerIndex = 0;
-		CurrentRound = 0;
+		CurrentRound = NOT_STARTED;
 		MrXLastLocation = 0;
 	}
 
@@ -123,7 +123,7 @@ public class ScotlandYardModel implements ScotlandYardGame, Consumer<Move>, Move
 	//check if the node is occupied by any detectives
 	private boolean validNode(int destination) {
 		boolean valid = true;
-		for (ScotlandYardPlayer Player : playerslist) {
+		for (ScotlandYardPlayer Player : playerList) {
 			if (Player.location() == destination && Player.isDetective()) {
 				//invalid node as node is occupied by detective
 				valid = false;
@@ -244,7 +244,7 @@ public class ScotlandYardModel implements ScotlandYardGame, Consumer<Move>, Move
 			throw new IllegalStateException("Game is over");
 		}
 
-		ScotlandYardPlayer currentPlayer = playerslist.get(CurrentPlayerIndex);
+		ScotlandYardPlayer currentPlayer = playerList.get(CurrentPlayerIndex);
 		Set <Move> moves = validMove(currentPlayer);
 		currentPlayer.player().makeMove(this, currentPlayer.location(), moves, this);
 	}
@@ -253,19 +253,81 @@ public class ScotlandYardModel implements ScotlandYardGame, Consumer<Move>, Move
 	public void accept(Move move) {
 		requireNonNull(move);
 		//check if move is valid
-		if (!validMove(playerslist.get(CurrentPlayerIndex)).contains(move)) {
+		if (!validMove(playerList.get(CurrentPlayerIndex)).contains(move)) {
 			throw new IllegalArgumentException("Invalid Move");
 		}
+
 		//visit the move
 		move.visit(this);
 
 		// update the currentPlayerIndex so next player will be called to make move
-		CurrentPlayerIndex = (CurrentPlayerIndex + 1)%(playerslist.size());
-		ScotlandYardPlayer currentPlayer = playerslist.get(CurrentPlayerIndex );
+		CurrentPlayerIndex = (CurrentPlayerIndex + 1)%(playerList.size());
+		ScotlandYardPlayer currentPlayer = playerList.get(CurrentPlayerIndex );
 
+		//Call makeMove to next player
 		if (!currentPlayer.isMrX() && !isGameOver()) {
 			currentPlayer.player().makeMove(this, currentPlayer.location(), validMove(currentPlayer), this);
 		}
+	}
+
+	//on reveal round, update mr x last location to current location
+	private void revealRound(int location){
+		if(getRounds().get(CurrentRound)){
+			MrXLastLocation = location;
+		}
+	}
+
+	//implementation of visit method for ticket move
+	@Override
+	public void visit (TicketMove move){
+		ScotlandYardPlayer player = playerList.get(CurrentPlayerIndex);
+
+		if(player.isDetective()){
+			//update player location
+			player.location(move.destination());
+			//remove ticket used from player
+			player.removeTicket(move.ticket());
+			//add ticket to MrX
+			playerList.get(0).addTicket(move.ticket());
+		}
+
+		if(player.isMrX()){
+			//update MrX location
+			player.location(move.destination());
+			//deal with reveal round
+			revealRound(player.location());
+			//Remove Location
+			player.removeTicket(move.ticket());
+			CurrentRound ++;
+		}
+	}
+
+	//implementation of visit method for double move
+	@Override
+	public void visit (DoubleMove move){
+		ScotlandYardPlayer MrX = playerList.get(CurrentPlayerIndex);
+
+		MrX.location(move.finalDestination());
+
+		MrX.removeTicket(move.firstMove().ticket());
+		//check if the first move lies on reveal round
+		revealRound(move.firstMove().destination());
+		CurrentRound++;
+
+		MrX.removeTicket(move.secondMove().ticket());
+		//check if the second move lies on reveal round
+		revealRound(move.finalDestination());
+		CurrentRound++;
+
+		//remove double ticket
+		MrX.removeTicket(DOUBLE);
+
+		//CurrentRound += 2;
+	}
+
+	//implementation of visit method for pass move
+	@Override
+	public void visit (PassMove move){
 	}
 
 	@Override
@@ -278,7 +340,7 @@ public class ScotlandYardModel implements ScotlandYardGame, Consumer<Move>, Move
 	@Override
 	public List<Colour> getPlayers() {
 		ArrayList<Colour> colours = new ArrayList<>();
-		for (ScotlandYardPlayer Player : playerslist) {
+		for (ScotlandYardPlayer Player : playerList) {
 			colours.add(Player.colour());
 		}
 		return Collections.unmodifiableList(colours);
@@ -296,7 +358,7 @@ public class ScotlandYardModel implements ScotlandYardGame, Consumer<Move>, Move
 			return Optional.of(MrXLastLocation);
 		else
 			//return location of requested player
-			for (ScotlandYardPlayer player : playerslist){
+			for (ScotlandYardPlayer player : playerList){
 				if(player.colour() == colour)
 					return Optional.of(player.location());
 		}
@@ -305,7 +367,7 @@ public class ScotlandYardModel implements ScotlandYardGame, Consumer<Move>, Move
 
 	@Override
 	public Optional<Integer> getPlayerTickets(Colour colour, Ticket ticket) {
-		for (ScotlandYardPlayer player : playerslist) {
+		for (ScotlandYardPlayer player : playerList) {
 			if (player.colour() == colour)
 				return Optional.of(player.tickets().get(ticket));
 		}
@@ -319,7 +381,7 @@ public class ScotlandYardModel implements ScotlandYardGame, Consumer<Move>, Move
 
 	@Override
 	public Colour getCurrentPlayer() {
-		return playerslist.get(CurrentPlayerIndex).colour();
+		return playerList.get(CurrentPlayerIndex).colour();
 	}
 
 	@Override
