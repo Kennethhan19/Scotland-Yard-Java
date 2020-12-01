@@ -6,6 +6,7 @@ import static java.util.Collections.singletonList;
 import static java.util.Collections.unmodifiableCollection;
 import static java.util.Collections.unmodifiableList;
 import static java.util.Collections.unmodifiableSet;
+import static java.util.Objects.checkFromToIndex;
 import static java.util.Objects.requireNonNull;
 import static uk.ac.bris.cs.scotlandyard.model.Colour.BLACK;
 import static uk.ac.bris.cs.scotlandyard.model.Ticket.*;
@@ -32,9 +33,11 @@ public class ScotlandYardModel implements ScotlandYardGame, Consumer<Move>, Move
 	private List<Boolean> rounds;
 	private Graph<Integer, Transport> graph;
 	private List<ScotlandYardPlayer> playerList = new ArrayList<>();
+	private Set<Colour> winningPlayers = new HashSet<>();
 	private int CurrentPlayerIndex;
 	private int CurrentRound;
 	private int MrXLastLocation;
+	private List<Spectator> spectators = new ArrayList<>();
 
 	public ScotlandYardModel(List<Boolean> rounds,
 				Graph<Integer, Transport> graph,
@@ -110,14 +113,25 @@ public class ScotlandYardModel implements ScotlandYardGame, Consumer<Move>, Move
 
 	@Override
 	public void registerSpectator(Spectator spectator) {
-		// TODO
-		throw new RuntimeException("Implement me");
+		requireNonNull(spectator);
+		if(spectators.contains(spectator)){
+			throw new IllegalArgumentException("Spectator already registered");
+		}
+		spectators.add(spectator);
 	}
 
 	@Override
 	public void unregisterSpectator(Spectator spectator) {
-		// TODO
-		throw new RuntimeException("Implement me");
+		requireNonNull(spectator);
+		if (!spectators.contains(spectator)){
+			throw new IllegalArgumentException("Unregistered spectator");
+			}
+		spectators.remove(spectator);
+	}
+
+	@Override
+	public Collection<Spectator> getSpectators() {
+		return Collections.unmodifiableList(spectators);
 	}
 
 	//check if the node is occupied by any detectives
@@ -148,7 +162,7 @@ public class ScotlandYardModel implements ScotlandYardGame, Consumer<Move>, Move
 			//get destination of the edge
 			int destination = edge.destination().value();
 			// check if destination (node) is occupied
-			if (validNode(destination) != false){
+			if (validNode(destination)){
 				//check if player has ticket to travel to destination(node)
 				if (currentPlayer.hasTickets(Ticket.fromTransport(edge.data())))
 					//generate moves for player
@@ -183,7 +197,7 @@ public class ScotlandYardModel implements ScotlandYardGame, Consumer<Move>, Move
 				// get destination (node)of edge
 				int destination = edge.destination().value();
 				// check if occupied by detective
-				if (validNode(destination) != false) {
+				if (validNode(destination)) {
 					//check for appropriate ticket
 					if (currentPlayer.hasTickets(Ticket.fromTransport(edge.data())))
 						secondMoves.add(new TicketMove(currentPlayer.colour(), Ticket.fromTransport(edge.data()), destination));
@@ -218,12 +232,12 @@ public class ScotlandYardModel implements ScotlandYardGame, Consumer<Move>, Move
 
 	//Generates all possible valid moves of the current player based on player's location
 	private Set<Move> validMove(ScotlandYardPlayer currentPlayer) {
-		// stores all final validMove for the currentPlayer
-		Set<Move>allMoves = new HashSet<>();
 
 		Set<Move> firstMoves = firstMove(currentPlayer);
+		// stores all final validMove for the currentPlayer
 		//add all first moves to final move set
-		allMoves.addAll(firstMoves);
+		Set<Move> allMoves = new HashSet<>(firstMoves);
+
 
 		//check if player (MrX) has DOUBLE ticket
 		if(currentPlayer.hasTickets(DOUBLE)) {
@@ -252,17 +266,32 @@ public class ScotlandYardModel implements ScotlandYardGame, Consumer<Move>, Move
 	@Override
 	public void accept(Move move) {
 		requireNonNull(move);
+
 		//check if move is valid
 		if (!validMove(playerList.get(CurrentPlayerIndex)).contains(move)) {
 			throw new IllegalArgumentException("Invalid Move");
 		}
 
+		// update the currentPlayerIndex so next player will be called to make move
+		CurrentPlayerIndex = (CurrentPlayerIndex + 1)%(playerList.size());
+		//get next player
+		ScotlandYardPlayer currentPlayer = playerList.get(CurrentPlayerIndex );
 		//visit the move
 		move.visit(this);
 
-		// update the currentPlayerIndex so next player will be called to make move
-		CurrentPlayerIndex = (CurrentPlayerIndex + 1)%(playerList.size());
-		ScotlandYardPlayer currentPlayer = playerList.get(CurrentPlayerIndex );
+		//notify spectator if game is over
+		if(isGameOver()){
+			for (Spectator spectator : spectators){
+				spectator.onGameOver(this, getWinningPlayers());
+			}
+		}
+
+		//notify spectator when rotation completed
+		if(currentPlayer.isMrX() && !isGameOver()){
+			for (Spectator spectator : spectators){
+				spectator.onRotationComplete(this);
+			}
+		}
 
 		//Call makeMove to next player
 		if (!currentPlayer.isMrX() && !isGameOver()) {
@@ -277,63 +306,95 @@ public class ScotlandYardModel implements ScotlandYardGame, Consumer<Move>, Move
 		}
 	}
 
+	//previous player index
+	private int previousPlayer (){
+		int prevPlayerIndex;
+		//if currentPlayer is 0, prev player is last player of list
+		if (CurrentPlayerIndex == 0){
+			prevPlayerIndex = playerList.size()-1;
+		}
+		else {prevPlayerIndex = CurrentPlayerIndex-1;}
+		return prevPlayerIndex;
+	}
+
 	//implementation of visit method for ticket move
 	@Override
-	public void visit (TicketMove move){
-		ScotlandYardPlayer player = playerList.get(CurrentPlayerIndex);
+	public void visit (TicketMove move) {
+		ScotlandYardPlayer player = playerList.get(previousPlayer());
 
-		if(player.isDetective()){
+		if (player.isDetective()) {
 			//update player location
 			player.location(move.destination());
 			//remove ticket used from player
 			player.removeTicket(move.ticket());
 			//add ticket to MrX
 			playerList.get(0).addTicket(move.ticket());
+
+			//notify spectator on move made
+			for (Spectator spectator : spectators) {
+				spectator.onMoveMade(this, move);
+			}
 		}
 
-		if(player.isMrX()){
+		if (player.isMrX()) {
 			//update MrX location
 			player.location(move.destination());
 			//deal with reveal round
 			revealRound(player.location());
 			//Remove Location
 			player.removeTicket(move.ticket());
-			CurrentRound ++;
+			CurrentRound++;
+
+			//notify spectator abt new round and move made
+			for (Spectator spectator : spectators) {
+				spectator.onRoundStarted(this, CurrentRound);
+				if (!rounds.get(CurrentRound - 1)) {
+					spectator.onMoveMade(this, new TicketMove(playerList.get(0).colour(), move.ticket(), MrXLastLocation));
+				} else {
+					spectator.onMoveMade(this, move);
+				}
+			}
 		}
 	}
 
 	//implementation of visit method for double move
 	@Override
 	public void visit (DoubleMove move){
-		ScotlandYardPlayer MrX = playerList.get(CurrentPlayerIndex);
-
-		MrX.location(move.finalDestination());
-
-		MrX.removeTicket(move.firstMove().ticket());
-		//check if the first move lies on reveal round
-		revealRound(move.firstMove().destination());
-		CurrentRound++;
-
-		MrX.removeTicket(move.secondMove().ticket());
-		//check if the second move lies on reveal round
-		revealRound(move.finalDestination());
-		CurrentRound++;
+		requireNonNull(move);
+		ScotlandYardPlayer MrX = playerList.get(0);
 
 		//remove double ticket
 		MrX.removeTicket(DOUBLE);
 
-		//CurrentRound += 2;
+		int location1;
+		int location2;
+		//check if first move lies on reveal round
+		Boolean r1 = getRounds().get(CurrentRound);
+		//check if second move lies on reveal round
+		Boolean r2 = getRounds().get(CurrentRound+1);
+		//reveal - show loc else last loc
+		if(r1){location1 = move.firstMove().destination();}
+		else{location1 = MrXLastLocation;}
+		if(r2){location2 = move.finalDestination();}
+		else{location2 = MrXLastLocation;}
+		//if first round is reveal round then last loc become first round location
+		if(r1 && !r2){location2=location1;}
+		DoubleMove doubleMove = new DoubleMove(MrX.colour(), move.firstMove().ticket(),location1, move.secondMove().ticket(), location2);
+		//notify spectator of the move
+		for(Spectator spectator: spectators){
+			spectator.onMoveMade(this, doubleMove);
+		}
+
+		move.firstMove().visit(this);
+		move.secondMove().visit(this);
 	}
 
 	//implementation of visit method for pass move
 	@Override
 	public void visit (PassMove move){
-	}
-
-	@Override
-	public Collection<Spectator> getSpectators() {
-		// TODO
-		throw new RuntimeException("Implement me");
+		for (Spectator spectator : spectators){
+			spectator.onMoveMade(this, move);
+		}
 	}
 
 	//returns list of players(Colour)
@@ -348,7 +409,11 @@ public class ScotlandYardModel implements ScotlandYardGame, Consumer<Move>, Move
 
 	@Override
 	public Set<Colour> getWinningPlayers() {
-		return Collections.emptySet();
+		if (isGameOver()) {
+			return Collections.unmodifiableSet(winningPlayers);
+		} else {
+			return Collections.emptySet();
+		}
 	}
 
 	@Override
@@ -374,9 +439,59 @@ public class ScotlandYardModel implements ScotlandYardGame, Consumer<Move>, Move
 		return Optional.empty();
 	}
 
+	//check if MrX is captured
+	private boolean MrXCaptured (){
+		for (ScotlandYardPlayer player : playerList){
+			//check if player is detective and its location is same as MrX
+			if (player.isDetective()) {
+				if (player.location() == playerList.get(0).location()){
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	//check if MrX cornered
+	private boolean MrXCornered() {
+		return (getCurrentPlayer() == BLACK && validMove(playerList.get(0)).isEmpty());
+	}
+
+	//Check if MrX is not captured in any round
+	private boolean MrXNotCaptured(){
+		return (CurrentRound == rounds.size() && getCurrentPlayer() == BLACK);
+	}
+
+	//check if detectives are stuck
+	private boolean detectiveStuck() {
+		boolean result = true;
+		for (ScotlandYardPlayer player : playerList) {
+			if (player.isDetective() ) {
+				if (player.hasTickets(BUS) || player.hasTickets(TAXI) || player.hasTickets(UNDERGROUND)) {
+					result = false;
+				}
+			}
+		}
+		return result;
+	}
+
 	@Override
 	public boolean isGameOver() {
-		return false;
+		boolean result = false;
+		if(MrXCaptured() || MrXCornered()){
+			for(ScotlandYardPlayer player : playerList)
+				if (player.isDetective()) {
+					winningPlayers.add(player.colour());
+				}
+			result = true;
+		}
+
+		if(MrXNotCaptured() || detectiveStuck()){
+			winningPlayers.add(BLACK);
+			result = true;
+		}
+
+		return result;
 	}
 
 	@Override
